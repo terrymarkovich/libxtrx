@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 2.8)
 set(MAJOR_VERSION 0)
 set(API_COMPAT    0)
 set(MINOR_VERSION 1)
-set(MAINT_VERSION git)
+set(MAINT_VERSION 2)
 
 set(LIBVER  "${MAJOR_VERSION}.${API_COMPAT}.${MINOR_VERSION}")
 
@@ -79,6 +79,7 @@ find_package(libxtrxll REQUIRED)
 
 include_directories(${LIBXTRXDSP_INCLUDE_DIRS})
 include_directories(${LIBXTRXLL_INCLUDE_DIRS})
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 
 if(LMS_FE_OLD)
@@ -92,7 +93,7 @@ else()
     include_directories(${LIBLMS7COMPACT_INCLUDE_DIRS})
 
     add_definitions(-DHAVE_LMS_NFE)
-    set(LMS_FE_FILENAME "xtrx_fe_nlms7.c")
+    set(LMS_FE_FILENAME "xtrx_fe_nlms7.c" "xtrx_fe_octorx0.c"  "xtrx_fe_octocal0.c" "octo/adf4355.c")
     set(LMS_FE_LIBRARY  ${LIBLMS7COMPACT_LIBRARIES})
 endif()
 
@@ -150,10 +151,11 @@ set(CPACK_PACKAGE_NAME                "libxtrx")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "XTRX API library")
 set(CPACK_PACKAGE_VENDOR              "Fairwaves, Inc.")
 set(CPACK_PACKAGE_CONTACT             "http://fairwaves.co/wp/contact-us/")
-set(CPACK_PACKAGE_VERSION             ${LIBVER}-1)
+set(CPACK_PACKAGE_VERSION             ${LIBVER}-${MAINT_VERSION})
 set(CPACK_DEBIAN_PACKAGE_DEPENDS      "libc6 (>= 2.17), libxtrxll (>= 0.0.1), libxtrxdsp (>= 0.0.1), liblms7002m (>= 0.0.1)")
 if(ENABLE_SOAPY)
-	set(CPACK_DEBIAN_PACKAGE_DEPENDS      "${CPACK_DEBIAN_PACKAGE_DEPENDS}, soapysdr (>= 0.5.2)")
+#	TODO: need a dependency for correct soapy version
+#	set(CPACK_DEBIAN_PACKAGE_DEPENDS      "${CPACK_DEBIAN_PACKAGE_DEPENDS}, soapysdr (>= 0.5.2)")
 endif(ENABLE_SOAPY)
 
 

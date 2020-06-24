@@ -17,7 +17,6 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
-#include "xtrx_fe.h"
 #include <xtrxll_api.h>
 #include <xtrxll_log.h>
 #include <xtrxll_mmcm.h>
@@ -28,19 +27,13 @@
 #include <assert.h>
 #include <stdarg.h>
 
-#include "../liblms7002m/liblms7002m.h"
-
 #include "xtrx_api.h"
+#include "xtrx_fe_nlms7.h"
+
 
 enum {
 	MIN_TX_RATE = 2100000, /* 2.1e6 Minimum samplerate supported by the XTRX hardware */
 };
-
-typedef struct xtrx_bparam
-{
-	bool set;
-	unsigned value;
-} xtrx_bparam_t;
 
 static void bparam_set_null(xtrx_bparam_t* p)
 {
@@ -72,67 +65,6 @@ static void bparamu8_set_val(xtrx_bparam_t* p, unsigned val)
 }
 #endif
 
-struct xtrx_nfe_lms7
-{
-	struct xtrx_fe_obj base;
-
-	struct xtrxll_dev* lldev;
-	struct lms7_state lms_state;
-
-	double cgen_clk;
-
-	unsigned lmsnum;
-	unsigned refclock;
-	unsigned refclk_source;
-
-	bool rx_no_siso_map;
-	bool tx_no_siso_map;
-
-	bool tx_run_a;
-	bool tx_run_b;
-
-	bool rx_run_a;
-	bool rx_run_b;
-
-	bool rx_port_1;
-
-	uint8_t             rx_mmcm_div;
-	uint8_t             tx_mmcm_div;
-	uint8_t             rx_port_cfg;
-	uint8_t             tx_port_cfg;
-
-	bool                rx_lna_auto;
-	bool                tx_lna_auto;
-
-	unsigned rx_host_decim;
-	unsigned tx_host_inter;
-
-	unsigned            rxcgen_div;
-	unsigned            txcgen_div;
-	unsigned            rxtsp_div;     /* Div ratio at LML */
-	unsigned            rxtsp_decim;   /* Decimation in TSP */
-	unsigned            txtsp_div;
-	unsigned            txtsp_interp;  /* Interpolation in TSP */
-
-	unsigned            txant;
-	unsigned            rxant;
-
-	double              rx_lo;
-	double              tx_lo;
-
-	struct lml_map maprx;
-	struct lml_map maptx;
-
-	enum lml_mode lml_mode;
-	unsigned lml_txdiv;
-	unsigned lml_rxdiv;
-
-	xtrx_bparam_t tx_bw[2];
-	xtrx_bparam_t rx_bw[2];
-
-	xtrx_bparam_t tx_dsp[2];
-	xtrx_bparam_t rx_dsp[2];
-};
 
 enum xtrxll_lms7_pwr {
 	XTRXLL_LMS7_RESET_PIN = 1<<1,
@@ -327,8 +259,9 @@ static int _xtrx_channel_to_lms7(unsigned xch, enum lms7_mac_mode* out)
 }
 
 int lms7nfe_init(struct xtrxll_dev* lldev,
-				unsigned flags,
-				struct xtrx_fe_obj** obj)
+				 unsigned flags,
+				 const char *fename,
+				 struct xtrx_fe_obj** obj)
 {
 	struct xtrx_nfe_lms7 *dev;
 	int lmscnt = 0;
@@ -837,10 +770,10 @@ static bool _xtrx_run_params_stream_is_mimo(const struct xtrx_dd_chpar* stream)
 			!(stream->flags & XTRX_RSP_SISO_MODE));
 }
 
-static const struct lml_map _get_lml_portcfg(const struct xtrx_dd_chpar* par,
+const struct lml_map lms7nfe_get_lml_portcfg(const struct xtrx_dd_chpar* par,
 											 bool no_siso_map)
 {
-	static const struct lml_map diqarray[12] = {
+	static const struct lml_map diqarray[16] = {
 		// MIMO modes
 		{{ LML_BI, LML_AI, LML_BQ, LML_AQ }},
 		{{ LML_BQ, LML_AQ, LML_BI, LML_AI }},
@@ -851,11 +784,16 @@ static const struct lml_map _get_lml_portcfg(const struct xtrx_dd_chpar* par,
 		{{ LML_AQ, LML_AQ, LML_AI, LML_AI }},
 		{{ LML_BI, LML_BI, LML_BQ, LML_BQ }},
 		{{ LML_BQ, LML_BQ, LML_BI, LML_BI }},
-		// MIMO test modes
+		// MIMO test modes (swap IQ_B)
 		{{ LML_BQ, LML_AI, LML_BI, LML_AQ }},
 		{{ LML_BI, LML_AQ, LML_BQ, LML_AI }},
 		{{ LML_AQ, LML_BI, LML_AI, LML_BQ }},
 		{{ LML_AI, LML_BQ, LML_AQ, LML_BI }},
+		// MIMO test modes (swap IQ_A)
+		{{ LML_BI, LML_AQ, LML_BQ, LML_AI }},
+		{{ LML_BQ, LML_AI, LML_BI, LML_AQ }},
+		{{ LML_AI, LML_BQ, LML_AQ, LML_BI }},
+		{{ LML_AQ, LML_BI, LML_AI, LML_BQ }},
 	};
 
 	unsigned diqidx = 0;
@@ -869,6 +807,8 @@ static const struct lml_map _get_lml_portcfg(const struct xtrx_dd_chpar* par,
 		diqidx |= 4;
 	else if (par->flags & XTRX_RSP_SWAP_IQB)
 		diqidx |= 8;
+	else if (par->flags & XTRX_RSP_SWAP_IQA)
+		diqidx |= 12;
 
 	assert(diqidx < (sizeof(diqarray)/sizeof(diqarray[0])));
 	return diqarray[diqidx];
@@ -889,7 +829,7 @@ static unsigned _ulog(unsigned d)
 static enum lms7_mac_mode _corr_ch(enum lms7_mac_mode mode,
 								   unsigned flags)
 {
-	if (mode == LMS7_CH_AB && (flags & XTRX_RSP_SISO_MODE)) {
+	if (mode == LMS7_CH_AB && (flags & XTRX_RSP_SISO_MODE) && (!(flags & XTRX_RSP_SISO_SWITCH))) {
 		if (flags & XTRX_RSP_SWAP_AB) {
 			mode = LMS7_CH_B;
 		} else {
@@ -919,7 +859,8 @@ int lms7nfe_dd_configure(struct xtrx_nfe_lms7* dev,
 			return -EINVAL;
 		}
 		rx_lmschan = _corr_ch(rx_lmschan, params->rx.flags);
-		dev->maprx = _get_lml_portcfg(&params->rx, dev->rx_no_siso_map);
+		dev->chprx = params->rx;
+		dev->maprx = lms7nfe_get_lml_portcfg(&dev->chprx, dev->rx_no_siso_map);
 
 		rxafen_a = rx_lmschan != LMS7_CH_B;
 		rxafen_b = rx_lmschan != LMS7_CH_A;
@@ -929,7 +870,8 @@ int lms7nfe_dd_configure(struct xtrx_nfe_lms7* dev,
 			return -EINVAL;
 		}
 		tx_lmschan = _corr_ch(tx_lmschan, params->tx.flags);
-		dev->maptx = _get_lml_portcfg(&params->tx, dev->tx_no_siso_map);
+		dev->chptx = params->tx;
+		dev->maptx = lms7nfe_get_lml_portcfg(&dev->chptx, dev->tx_no_siso_map);
 
 		txafen_a = tx_lmschan != LMS7_CH_B;
 		txafen_b = tx_lmschan != LMS7_CH_A;
@@ -1092,6 +1034,8 @@ int lms7nfe_dd_configure(struct xtrx_nfe_lms7* dev,
 		dev->lml_mode = nlml_mode;
 	}
 
+	XTRXLLS_LOG("LMSF", XTRXLL_INFO_LMS, "%s: configure done\n",
+			   xtrxll_get_name(dev->lldev));
 	return 0;
 }
 
@@ -1138,7 +1082,6 @@ int lms7nfe_dd_set_modes(struct xtrx_fe_obj* obj,
 						const struct xtrx_dd_params *params)
 {
 	struct xtrx_nfe_lms7 *dev = (struct xtrx_nfe_lms7 *)obj;
-
 	switch (op) {
 	case XTRX_FEDD_CONFIGURE:
 		return lms7nfe_dd_configure(dev, params);
@@ -1249,6 +1192,9 @@ int lms7nfe_bb_set_badwidth(struct xtrx_fe_obj* obj,
 		if (dir == XTRX_TUNE_BB_RX) {
 			bparam_set_val(&dev->rx_bw[(j == LMS7_CH_A) ? 0 : 1], bw);
 
+//			res = lms7_rbb_set_ext(&dev->lms_state);
+#if 1
+
 			///////////////// FIXMEEEEEEEEEE!!!!!!!!!!!!!!!!!!!!!!!!
 			res = lms7_rbb_set_path(&dev->lms_state, RBB_LBF);
 			if (res)
@@ -1257,6 +1203,7 @@ int lms7nfe_bb_set_badwidth(struct xtrx_fe_obj* obj,
 			res = lms7_rbb_set_bandwidth(&dev->lms_state, bw);
 			if (actualbw)
 				*actualbw = bw;
+#endif
 		} else if (dir == XTRX_TUNE_BB_TX) {
 			bparam_set_val(&dev->tx_bw[(j == LMS7_CH_A) ? 0 : 1], bw);
 
@@ -1541,6 +1488,28 @@ int lms7nfe_set_reg(struct xtrx_fe_obj* obj,
 	case XTRX_FE_CUSTOM_0 + 1:
 		dev->txant = val & 1;
 		return xtrxll_set_param(dev->lldev, XTRXLL_PARAM_SWITCH_TX_ANT, dev->txant);
+
+	case XTRX_FE_CUSTOM_0 + 2:
+		if (val) {
+			dev->chprx.flags |= XTRX_RSP_SWAP_AB;
+		} else {
+			dev->chprx.flags &= ~XTRX_RSP_SWAP_AB;
+		}
+		dev->maprx = lms7nfe_get_lml_portcfg(&dev->chprx, dev->rx_no_siso_map);
+		return lms7_lml_set_map(&dev->lms_state,
+								dev->rx_port_1 ? dev->maprx : dev->maptx,
+								dev->rx_port_1 ? dev->maptx : dev->maprx);
+
+	case XTRX_FE_CUSTOM_0 + 3:
+		if (val) {
+			dev->chptx.flags |= XTRX_RSP_SWAP_AB;
+		} else {
+			dev->chptx.flags &= ~XTRX_RSP_SWAP_AB;
+		}
+		dev->maptx = lms7nfe_get_lml_portcfg(&dev->chptx, dev->tx_no_siso_map);
+		return lms7_lml_set_map(&dev->lms_state,
+								dev->rx_port_1 ? dev->maprx : dev->maptx,
+								dev->rx_port_1 ? dev->maptx : dev->maprx);
 
 	default:
 		if (type >= XTRX_RFIC_REG_0 && type <= XTRX_RFIC_REG_0 + 65535)	{

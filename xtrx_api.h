@@ -196,7 +196,7 @@ typedef enum xtrx_samplerate_flags {
  * @param dev       XTRX device handle
  * @param cgen_rate CGEN clock rate, 0 for autoselect
  * @param rxrate    RX sample rate after all decimation stages (as seen on the PCIe interaface), 0 to disable RX
- * @param txrate    TX sample rate defore any interpolation (as seen on the PCIe interaface), 0 to disable TX
+ * @param txrate    TX sample rate before any interpolation (as seen on the PCIe interaface), 0 to disable TX
  * @param[out] actualcgen Actual CGEN clock
  * @param[out] actualrx   Actual RX clock
  * @param[out] actualtx   Actual TX clock
@@ -385,6 +385,9 @@ typedef enum xtrx_gtime_cmd {
     XTRX_GTIME_GET_CUR,
     XTRX_GTIME_APPLY_CORRECTION,
     XTRX_GTIME_GET_GPSPPS_DELTA,
+    XTRX_GTIME_SET_CURSEC,
+    XTRX_GTIME_ENABLE_INT_WEXTENFW,
+    XTRX_GTIME_ENABLE_EXTNFW,
     //XTRX_GTIME_ENABLE_AT_GPSPPS,
 } xtrx_gtime_cmd_t;
 
@@ -523,6 +526,8 @@ enum xtrx_recv_ex_info_flags {
 	RCVEX_EXTRA_LOG = 16,
 
 	RCVEX_TIMOUT = 32,
+
+	RCVEX_REPORT_GTIME = 64,
 };
 
 enum xtrx_recv_ex_info_events {

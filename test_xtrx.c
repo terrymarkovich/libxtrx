@@ -52,7 +52,7 @@ double parse_val(const char* a)
 	return z;
 }
 
-
+static int rx_rep_gtime = 0;
 static uint32_t s_tx_skip = 8192;
 static unsigned s_logp = 0;
 
@@ -320,6 +320,10 @@ int stream_rx(struct stream_data* sdata,
 			ri.buffer_count = buf_cnt;
 			ri.buffers = stream_buffers;
 			ri.flags = 0;
+
+			if (rx_rep_gtime) {
+				ri.flags |= RCVEX_REPORT_GTIME;
+			}
 
 			uint64_t sa = grtime();
 			uint64_t da = sa - sp;
@@ -860,7 +864,11 @@ int main(int argc, char** argv)
 	// Set XTRX parameters
 	//
 	if (refclk || extclk) {
-		xtrx_set_ref_clk(dev, refclk, (extclk) ? XTRX_CLKSRC_EXT : XTRX_CLKSRC_INT);
+		res = xtrx_set_ref_clk(dev, refclk, (extclk) ? XTRX_CLKSRC_EXT : XTRX_CLKSRC_INT);
+		if (res) {
+			fprintf(stderr, "Failed xtrx_set_ref_clk: %d\n", res);
+			goto falied_samplerate;
+		}
 	}
 
 	double master;
@@ -868,7 +876,7 @@ int main(int argc, char** argv)
 							  &master, &actual_rxsample_rate, &actual_txsample_rate);
 	if (res) {
 		fprintf(stderr, "Failed xtrx_set_samplerate: %d\n", res);
-		goto falied_samplerate;
+		//goto falied_samplerate;
 	}
 	fprintf(stderr, "Master: %.3f MHz; RX rate: %.3f MHz; TX rate: %.3f MHz\n",
 			master / 1e6,
@@ -959,6 +967,8 @@ int main(int argc, char** argv)
 	}
 
 	if (gmode > 0) {
+		rx_rep_gtime = 1;
+
 		gtime_data_t in = {0,0};
 		gtime_data_t out;
 		res = xtrx_gtime_op(dev, -1, XTRX_GTIME_DISABLE, in, &out);
@@ -967,11 +977,14 @@ int main(int argc, char** argv)
 			goto falied_tune;
 		}
 
-		unsigned cmd = (gmode == 3) ? XTRX_GTIME_ENABLE_INT_WEXTE :
+		unsigned cmd = (gmode == 6) ? XTRX_GTIME_ENABLE_EXT :
+						(gmode == 5) ? XTRX_GTIME_ENABLE_EXTNFW :
+						(gmode == 4) ? XTRX_GTIME_ENABLE_INT_WEXTENFW :
+						(gmode == 3) ? XTRX_GTIME_ENABLE_INT_WEXTE :
 						(gmode == 2) ? XTRX_GTIME_ENABLE_INT_WEXT :
 									 XTRX_GTIME_ENABLE_INT;
 
-		in.sec = 7;
+		in.sec = (gmode == 5) ? 4 : 7;
 		res = xtrx_gtime_op(dev, -1, cmd, in, &out);
 		if (res) {
 			fprintf(stderr, "Failed xtrx_gtime_op(3): %d\n", res);
